@@ -47,7 +47,7 @@ class CLI:
         self.parser.add_argument('--fftw', dest='dev_app_fftw', type=str,
                                  help='set fftw version. If not provided, GROMACS installtion will download and build FFTW from source.')
 
-        self.parser.add_argument('--cmake', dest='dev_cmake', type=str, default=config.DEFAULT_CMAKE_VERSION,
+        self.parser.add_argument('--cmake', dest='app_cmake', type=str, default=config.DEFAULT_CMAKE_VERSION,
                                  help='cmake version (default: {0}).'.format(config.DEFAULT_CMAKE_VERSION))
 
         self.parser.add_argument('--gcc', dest='dev_gcc', type=str, default=config.DEFAULT_GCC_VERSION,
@@ -73,8 +73,8 @@ class CLI:
 
     def __set_linux_distribution(self):
         linux_dist_group = self.parser.add_mutually_exclusive_group()
-        linux_dist_group.add_argument('--ubuntu', dest='dev_app_ubuntu', type=str, help='enable and set linux dist : ubuntu.')
-        linux_dist_group.add_argument('--centos', dest='dev_app_centos', type=str, help='enable and set linux dist : centos.')
+        linux_dist_group.add_argument('--ubuntu', dest='dev_app_dep_ubuntu', type=str, help='enable and set linux dist : ubuntu.')
+        linux_dist_group.add_argument('--centos', dest='dev_app_dep_centos', type=str, help='enable and set linux dist : centos.')
 
     def __set_gromacs_engines(self):
         self.parser.add_argument('--engines', type=str, dest='app_engines',

@@ -1,17 +1,5 @@
 FROM ubuntu:18.04 AS dev_stage
 
-# CMake version 3.17.1
-RUN apt-get update -y && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        make \
-        wget && \
-    rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /var/tmp && wget -q -nc --no-check-certificate -P /var/tmp https://cmake.org/files/v3.17/cmake-3.17.1-Linux-x86_64.sh && \
-    mkdir -p /usr/local && \
-    /bin/sh /var/tmp/cmake-3.17.1-Linux-x86_64.sh --prefix=/usr/local --skip-license && \
-    rm -rf /var/tmp/cmake-3.17.1-Linux-x86_64.sh
-ENV PATH=/usr/local/bin:$PATH
-
 # GNU compiler
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends software-properties-common && \
@@ -86,6 +74,11 @@ ENV LD_LIBRARY_PATH=/usr/local/openmpi/lib:$LD_LIBRARY_PATH \
 COPY --from=dev_stage /usr/local/fftw /usr/local/fftw
 ENV LD_LIBRARY_PATH=/usr/local/fftw/lib:$LD_LIBRARY_PATH
 
+RUN apt-get update -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        wget && \
+    rm -rf /var/lib/apt/lists/*
+
 # ftp://ftp.gromacs.org/pub/gromacs/gromacs-2020.1.tar.gz
 RUN mkdir -p /var/tmp && wget -q -nc --no-check-certificate -P /var/tmp ftp://ftp.gromacs.org/pub/gromacs/gromacs-2020.1.tar.gz && \
     mkdir -p /var/tmp && tar -x -f /var/tmp/gromacs-2020.1.tar.gz -C /var/tmp -z && \
@@ -98,4 +91,7 @@ RUN mkdir -p /var/tmp && wget -q -nc --no-check-certificate -P /var/tmp ftp://ft
     cmake --build /var/tmp/gromacs-2020.1/build.AVX2_256 --target check -- -j$(nproc) && \
     cmake --build /var/tmp/gromacs-2020.1/build.AVX2_256 --target install -- -j$(nproc) && \
     rm -rf /var/tmp/gromacs-2020.1 /var/tmp/gromacs-2020.1.tar.gz
+FROM ubuntu:18.04 AS deploy_stage
 
+# ftp://ftp.gromacs.org/pub/gromacs/gromacs-2020.1.tar.gz
+COPY --from=app_stage /usr/local/gromacs /usr/local/gromacs

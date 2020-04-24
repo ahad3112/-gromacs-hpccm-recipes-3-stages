@@ -44,9 +44,10 @@ class StageMixin:
         This method perform the preparation for the recipes and
         Then generate the recipes and finally cook the recipes
         '''
-        self._prepare()
 
         self.stage = hpccm.Stage()
+
+        self._prepare()
 
         for tool in tools_order:
             if tool in self.args:
@@ -61,6 +62,9 @@ class StageMixin:
 
         # Recipe has been prepared. Now, it is time to cook .....
         self._cook()
+
+    def format(self, spec):
+        hpccm.config.set_container_format(spec)
 
     def _runtime(self):
         '''
@@ -173,6 +177,7 @@ class DevelopmentStage(StageMixin):
 
 
 class ApplicationStage(StageMixin):
+    _os_packages = ['wget']
     _cmake_opts = "\
                 -DCMAKE_INSTALL_BINDIR=bin.$simd$ \
                 -DCMAKE_INSTALL_LIBDIR=lib.$simd$ \
@@ -212,6 +217,8 @@ class ApplicationStage(StageMixin):
         StageMixin._prepare(self)
 
     def gromacs(self, version):
+        # adding os_packages required for this stage application
+        self.stage += hpccm.building_blocks.packages(ospackages=self._os_packages)
         # relative to /var/tmp
         self.source_directory = 'gromacs-{version}'.format(version=version)
         # relative to source_directory
@@ -331,9 +338,8 @@ class DeploymentStage(StageMixin):
         StageMixin.__init__(self, args=args, previous_stage=previous_stage)
 
     def _prepare(self):
-        self.container_format = self.args.get('format', False)
-        del self.args['format']
-
+        # self.container_format = self.args.get('format', False)
+        # del self.args['format']
         StageMixin._prepare(self)
 
 
