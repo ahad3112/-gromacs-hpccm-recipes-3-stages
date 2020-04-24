@@ -31,7 +31,7 @@ class StageMixin:
             * double : need to delete it from the args, as there will be no method for double
             * cuda   : Will not delete it as we will add cuda method later
         '''
-        self.double = self.args.get('double', False)
+        self.double_precision_enabled = self.args.get('double', False)
         try:
             del self.args['double']
         except KeyError:
@@ -56,7 +56,7 @@ class StageMixin:
                     pass
                     # print(error)
                 else:
-                    # print(method)
+                    # print('method', method)
                     method(self.args[tool])
 
         # Recipe has been prepared. Now, it is time to cook .....
@@ -102,8 +102,8 @@ class StageMixin:
         '''
         This method will print all recipes for this stage
         '''
-        # pass
         print(self.stage)
+        # pass
 
     @staticmethod
     def version_checked(tool, required, given):
@@ -123,6 +123,9 @@ class DevelopmentStage(StageMixin):
     def __init__(self, *, args, previous_stage):
         self.stage_name = 'dev_stage'
         StageMixin.__init__(self, args=args, previous_stage=previous_stage)
+
+    def _prepare(self):
+        StageMixin._prepare(self)
 
     def gcc(self, version):
         '''
@@ -146,7 +149,7 @@ class DevelopmentStage(StageMixin):
         '''
         configure_opts = ['--enable-shared', '--disable-static', '--enable-sse2',
                           '--enable-avx', '--enable-avx2', '--enable-avx512']
-        if not self.double:
+        if not self.double_precision_enabled:
             configure_opts.append('--enable-float')
 
         if hasattr(self.compiler, 'toolchain'):
@@ -170,18 +173,168 @@ class DevelopmentStage(StageMixin):
 
 
 class ApplicationStage(StageMixin):
+    _cmake_opts = "\
+                -DCMAKE_INSTALL_BINDIR=bin.$simd$ \
+                -DCMAKE_INSTALL_LIBDIR=lib.$simd$ \
+                -DCMAKE_C_COMPILER=$c_compiler$ \
+                -DCMAKE_CXX_COMPILER=$cxx_compiler$ \
+                -DGMX_OPENMP=ON \
+                -DGMX_MPI=$mpi$ \
+                -DGMX_GPU=$cuda$ \
+                -DGMX_SIMD=$simd$ \
+                -DGMX_USE_RDTSCP=$rdtscp$ \
+                -DGMX_DOUBLE=$double$ \
+                -D$fft$ \
+                -DGMX_EXTERNAL_BLAS=OFF \
+                -DGMX_EXTERNAL_LAPACK=OFF \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DGMX_PREFER_STATIC_LIBS=ON \
+                -DREGRESSIONTEST_DOWNLOAD=$regtest$ \
+                -DGMX_DEFAULT_SUFFIX=OFF \
+                -DGMX_BINARY_SUFFIX=$bin_suffix$ \
+                -DGMX_LIBS_SUFFIX=$libs_suffix$ \
+                "
+
     def __init__(self, *, args, previous_stage):
         self.stage_name = 'app_stage'
         StageMixin.__init__(self, args=args, previous_stage=previous_stage)
 
+    def _prepare(self):
+        self.regtest_enabled = self.args.get('regtest', False)
+        # del self.args['regtest']
+        self.mpi_enabled = True if self.args.get('openmpi', None) or self.args.get('impi', None) else False
+        self.fftw_installed = True if self.args.get('fftw', None) else False
+
+        for key in ['openmpi', 'impi', 'fftw']:
+            if key in self.args:
+                del self.args[key]
+
+        StageMixin._prepare(self)
+
     def gromacs(self, version):
-        print('I am here')
+        # relative to /var/tmp
+        self.source_directory = 'gromacs-{version}'.format(version=version)
+        # relative to source_directory
+        self.build_directory = 'build.{simd}'
+        # installation directotry
+        self.prefix = config.GMX_INSTALLATION_DIRECTORY
+        # environment variables to be set prior to Gromacs build
+        self.build_environment = {}
+        # url to download Gromacs
+        self.url = 'ftp://ftp.gromacs.org/pub/gromacs/gromacs-{version}.tar.gz'.format(version=version)
+
+        self.gromacs_cmake_opts = self._get_gromacs_cmake_opts()
+        self.wrapper = 'gmx' + self._get_wrapper_suffix()
+
+    def regtest(self, enabled):
+        # update cmake_opts in case mpi was enabled
+        if self.mpi_enabled:
+            regtest_mpi_cmake_variables = " -DMPIEXEC_PREFLAGS='--allow-run-as-root;--oversubscribe'"
+            self.gromacs_cmake_opts = self.gromacs_cmake_opts + regtest_mpi_cmake_variables
+
+        # preinstall
+        self.preconfigure = ['apt-get update',
+                             'apt-get upgrade -y',
+                             'apt-get install -y perl', ]
+        self.check = True
+
+    def engines(self, engine_list):
+        # TODO : Deal with default engine. Move default engine chooser here or in config
+        for engine in engine_list:
+            # binary and library suffix for gmx
+            parsed_engine = self._parse_engine(engine)
+            bin_libs_suffix = self._get_bin_libs_suffix(parsed_engine['rdtscp'])
+            engine_cmake_opts = self.gromacs_cmake_opts.replace('$bin_suffix$', bin_libs_suffix)
+            engine_cmake_opts = engine_cmake_opts.replace('$libs_suffix$', bin_libs_suffix)
+
+            # simd, rdtscp
+            for key in parsed_engine:
+                value = parsed_engine[key] if key == 'simd' else parsed_engine[key].upper()
+                engine_cmake_opts = engine_cmake_opts.replace('$' + key + '$', value)
+
+            self.stage += hpccm.building_blocks.generic_cmake(cmake_opts=engine_cmake_opts.split(),
+                                                              directory=self.source_directory,
+                                                              build_directory=self.build_directory.format(simd=parsed_engine['simd']),
+                                                              prefix=self.prefix,
+                                                              build_environment=self.build_environment,
+                                                              url=self.url,
+                                                              preconfigure=self.preconfigure,
+                                                              check=self.check)
+
+    def _parse_engine(self, engine):
+        if engine:
+            engine_args = map(lambda x: x.strip(), engine.split(':'))
+            engine_args_dict = {}
+            for engine_arg in engine_args:
+                key, value = map(lambda x: x.strip(), engine_arg.split('='))
+
+                # TODO : Check arguments value
+                # self.__check_gromacs_engine_argument(key=key, value=value)
+
+                engine_args_dict[key] = config.SIMD_MAPPER[value] if key == 'simd' else value
+            return engine_args_dict
+
+    def _get_gromacs_cmake_opts(self):
+        '''
+        Configure the common cmake_opts for different Gromacs build
+        based on sind instruction
+        '''
+        gromacs_cmake_opts = self._cmake_opts[:]
+        # Compiler and mpi
+        if self.mpi_enabled:
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$c_compiler$', 'mpicc')
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$cxx_compiler$', 'mpicxx')
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$mpi$', 'ON')
+        else:
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$c_compiler$', 'gcc')
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$cxx_compiler$', 'g++')
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$mpi$', 'OFF')
+
+        #  fftw
+        if self.fftw_installed:
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$fft$', 'GMX_FFT_LIBRARY=fftw3')
+            self.build_environment['CMAKE_PREFIX_PATH'] = '\'/usr/local/fftw\''
+        else:
+            gromacs_cmake_opts = gromacs_cmake_opts.replace('$fft$', 'GMX_BUILD_OWN_FFTW=ON')
+
+        # cuda, regtest, double
+        for (option, enabled) in zip(['cuda', 'regtest', 'double'], [self.cuda_enabled, self.regtest_enabled, self.double_precision_enabled]):
+            if enabled:
+                gromacs_cmake_opts = gromacs_cmake_opts.replace('$' + option + '$', 'ON')
+            else:
+                gromacs_cmake_opts = gromacs_cmake_opts.replace('$' + option + '$', 'OFF')
+
+        return gromacs_cmake_opts
+
+    def _get_wrapper_suffix(self):
+        '''
+        Set the wrapper suffix based on mpi enabled/disabled and
+        double precision enabled and disabled
+        '''
+        return config.WRAPPER_SUFFIX_FORMAT.format(mpi=config.GMX_ENGINE_SUFFIX_OPTIONS['mpi'] if self.mpi_enabled else '',
+                                                   double=config.GMX_ENGINE_SUFFIX_OPTIONS['double'] if self.double_precision_enabled else '')
+
+    def _get_bin_libs_suffix(self, rdtscp):
+        '''
+        Set tgmx binaries and library suffix based on mpi enabled/disabled,
+        double precision enabled and disabled and
+        rdtscp enabled/disabled
+        '''
+        return config.BINARY_SUFFIX_FORMAT.format(mpi=config.GMX_ENGINE_SUFFIX_OPTIONS['mpi'] if self.mpi_enabled else '',
+                                                  double=config.GMX_ENGINE_SUFFIX_OPTIONS['double'] if self.double_precision_enabled else '',
+                                                  rdtscp=config.GMX_ENGINE_SUFFIX_OPTIONS['rdtscp'] if rdtscp.lower() == 'on' else '')
 
 
 class DeploymentStage(StageMixin):
     def __init__(self, *, args, previous_stage):
         self.stage_name = 'deploy_stage'
         StageMixin.__init__(self, args=args, previous_stage=previous_stage)
+
+    def _prepare(self):
+        self.container_format = self.args.get('format', False)
+        del self.args['format']
+
+        StageMixin._prepare(self)
 
 
 class BuildRecipes:

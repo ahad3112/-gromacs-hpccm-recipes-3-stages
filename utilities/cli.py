@@ -21,6 +21,8 @@ tools_order = [
     'impi',
     'fftw',
     'gromacs',
+    'regtest',
+    'engines',
     'format',
 ]
 
@@ -42,7 +44,7 @@ class CLI:
         self.parser.add_argument('--gromacs', dest='app_gromacs', type=str, default=config.DEFAULT_GROMACS_VERSION,
                                  help='set GROMACS version (default: {0}).'.format(config.DEFAULT_GROMACS_VERSION))
 
-        self.parser.add_argument('--fftw', dest='dev_fftw', type=str,
+        self.parser.add_argument('--fftw', dest='dev_app_fftw', type=str,
                                  help='set fftw version. If not provided, GROMACS installtion will download and build FFTW from source.')
 
         self.parser.add_argument('--cmake', dest='dev_cmake', type=str, default=config.DEFAULT_CMAKE_VERSION,
@@ -66,8 +68,8 @@ class CLI:
 
     def __set_mpi_options(self):
         mpi_group = self.parser.add_mutually_exclusive_group()
-        mpi_group.add_argument('--openmpi', dest='dev_openmpi', type=str, help='enable and set OpenMPI version.')
-        mpi_group.add_argument('--impi', dest='dev_impi', type=str, help='enable and set Intel MPI version.')
+        mpi_group.add_argument('--openmpi', dest='dev_app_openmpi', type=str, help='enable and set OpenMPI version.')
+        mpi_group.add_argument('--impi', dest='dev_app_impi', type=str, help='enable and set Intel MPI version.')
 
     def __set_linux_distribution(self):
         linux_dist_group = self.parser.add_mutually_exclusive_group()
@@ -78,7 +80,7 @@ class CLI:
         self.parser.add_argument('--engines', type=str, dest='app_engines',
                                  metavar='simd={simd}:rdtscp={rdtscp}'.format(simd='|'.join(config.ENGINE_OPTIONS['simd']),
                                                                               rdtscp='|'.join(config.ENGINE_OPTIONS['rdtscp'])),
-                                 nargs='*',
+                                 nargs='+',
                                  help='Specifying SIMD for multiple gmx engines within same image container')
 
     def __parse_gromacs_engines(self):
