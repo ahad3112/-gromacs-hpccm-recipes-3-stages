@@ -19,12 +19,4 @@ if __name__ == '__main__':
     previous_stage = None
     for (stage, args) in stages.items():
         # print(stage, args)
-        try:
-            previous_stage = getattr(recipes, stage)(args=args, previous_stage=previous_stage)
-        except AttributeError as error:
-            # print(error)
-            pass
-
-    # GromacsRecipes(cli=cli)
-
-    # print(parser.parse_args().__dict__)
+        previous_stage = getattr(recipes, stage)(args=args, previous_stage=previous_stage)

@@ -17,12 +17,6 @@ ENGINE_OPTIONS = {
 SIMD_MAPPER = dict(zip(ENGINE_OPTIONS['simd'], GMX_BINARY_DIRECTORY_SUFFIX))
 
 
-# Default Arguments
-# DEFAULT_SIMD = 'sse2'
-# DEFAULT_RDTSCP = 'on'
-# DEFAULT_MDRUN = 'off'
-
-
 # Minimum Software Version
 
 # Default Software version
