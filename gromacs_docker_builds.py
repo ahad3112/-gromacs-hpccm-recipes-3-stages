@@ -16,7 +16,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HPCCM recipes for GROMACS container')
     stages = CLI(parser=parser).get_stages()
 
-    previous_stage = None
+    previous_stages = []
     for (stage, args) in stages.items():
         # print(stage, args)
-        previous_stage = getattr(recipes, stage)(args=args, previous_stage=previous_stage)
+        previous_stages.append(getattr(recipes, stage)(args=args, previous_stages=previous_stages))

@@ -19,10 +19,10 @@ class StageMixin:
     DeploymentStage. such as, _prepare, _build, _runtime, _cook methods
     '''
 
-    def __init__(self, *, args, previous_stage):
+    def __init__(self, *, args, previous_stages):
         self.args = args
-        self.previous_stage = previous_stage
-        self._build(previous_stage=previous_stage)
+        self.previous_stages = previous_stages
+        self._build(previous_stages=previous_stages)
 
     def _prepare(self):
         '''
@@ -31,14 +31,13 @@ class StageMixin:
             * double : need to delete it from the args, as there will be no method for double
             * cuda   : Will not delete it as we will add cuda method later
         '''
-
+        self.double_precision_enabled = self.args.get('double', False)
         if 'double' in self.args:
-            self.double_precision_enabled = self.args.get('double', False)
             del self.args['double']
 
         self.cuda_enabled = True if self.args.get('cuda', None) else False
 
-    def _build(self, *, previous_stage):
+    def _build(self, *, previous_stages):
         '''
         This method perform the preparation for the recipes and
         Then generate the recipes and finally cook the recipes
@@ -71,6 +70,11 @@ class StageMixin:
         '''
         return self.stage.runtime()
 
+    def _add_runtime_from_previous_stages(self):
+        if self.previous_stages:
+            for prev_stage in self.previous_stages:
+                self.stage += prev_stage._runtime()
+
     def ubuntu(self, version):
         '''
         Choose base image based on Linux ubuntu distribution
@@ -80,8 +84,9 @@ class StageMixin:
             return
         else:
             self.stage += hpccm.primitives.baseimage(image='ubuntu:' + version, _as=self.stage_name)
-            if self.previous_stage:
-                self.stage += self.previous_stage._runtime()
+            # if self.previous_stages:
+            #     self.stage += self.previous_stages._runtime()
+            self._add_runtime_from_previous_stages()
 
     def centos(self, version):
         '''
@@ -92,8 +97,9 @@ class StageMixin:
             return
         else:
             self.stage += hpccm.primitives.baseimage(image='centos:centos' + version, _as=self.stage_name)
-            if self.previous_stage:
-                self.stage += self.previous_stage._runtime()
+            # if self.previous_stages:
+            #     self.stage += self.previous_stages._runtime()
+            self._add_runtime_from_previous_stages()
 
     def cuda(self, version):
         '''
@@ -139,9 +145,11 @@ class StageMixin:
 
 
 class DevelopmentStage(StageMixin):
-    def __init__(self, *, args, previous_stage):
+    def __init__(self, *, args, previous_stages):
         self.stage_name = 'dev_stage'
-        StageMixin.__init__(self, args=args, previous_stage=previous_stage)
+        self.fftw_installed = False
+        self.mpi_enabled = False
+        StageMixin.__init__(self, args=args, previous_stages=previous_stages)
 
     def _prepare(self):
         StageMixin._prepare(self)
@@ -159,6 +167,7 @@ class DevelopmentStage(StageMixin):
             self.stage += hpccm.building_blocks.fftw(toolchain=self.compiler.toolchain,
                                                      configure_opts=configure_opts,
                                                      version=version)
+            self.fftw_installed = True
         else:
             raise RuntimeError('Implementation Error: compiler is not an HPCCM building block')
 
@@ -168,6 +177,7 @@ class DevelopmentStage(StageMixin):
                 self.stage += hpccm.building_blocks.openmpi(cuda=self.cuda_enabled, infiniband=False,
                                                             toolchain=self.compiler.toolchain,
                                                             version=version)
+                self.mpi_enabled = True
             else:
                 raise RuntimeError('Implementation Error: compiler is not an HPCCM building block')
 
@@ -199,20 +209,14 @@ class ApplicationStage(StageMixin):
                 -DGMX_LIBS_SUFFIX=$libs_suffix$ \
                 "
 
-    def __init__(self, *, args, previous_stage):
+    def __init__(self, *, args, previous_stages):
         self.stage_name = 'app_stage'
-        StageMixin.__init__(self, args=args, previous_stage=previous_stage)
+        StageMixin.__init__(self, args=args, previous_stages=previous_stages)
 
     def _prepare(self):
         self.regtest_enabled = self.args.get('regtest', False)
-        # del self.args['regtest']
-        self.mpi_enabled = True if self.args.get('openmpi', None) or self.args.get('impi', None) else False
-        self.fftw_installed = True if self.args.get('fftw', None) else False
-
-        for key in ['openmpi', 'impi', 'fftw']:
-            if key in self.args:
-                del self.args[key]
-
+        self.mpi_enabled = self.previous_stages[len(self.previous_stages) - 1].mpi_enabled
+        self.fftw_installed = self.previous_stages[len(self.previous_stages) - 1].fftw_installed
         StageMixin._prepare(self)
 
     def gromacs(self, version):
@@ -233,19 +237,20 @@ class ApplicationStage(StageMixin):
         self.wrapper = 'gmx' + self._get_wrapper_suffix()
 
     def regtest(self, enabled):
-        # update cmake_opts in case mpi was enabled
-        if self.mpi_enabled:
-            regtest_mpi_cmake_variables = " -DMPIEXEC_PREFLAGS='--allow-run-as-root;--oversubscribe'"
-            self.gromacs_cmake_opts = self.gromacs_cmake_opts + regtest_mpi_cmake_variables
-
         # preinstall
         self.preconfigure = ['apt-get update',
                              'apt-get upgrade -y',
                              'apt-get install -y perl', ]
+        # allow regression test
         self.check = True
 
     def engines(self, engine_list):
         # TODO : Deal with default engine. Move default engine chooser here or in config
+
+        # Getting preconfigure and check attr if available
+        preconfigure = self.preconfigure if hasattr(self, 'preconfigure') else []
+        check = self.check if hasattr(self, 'check') else False
+
         for engine in engine_list:
             # binary and library suffix for gmx
             parsed_engine = self._parse_engine(engine)
@@ -264,8 +269,8 @@ class ApplicationStage(StageMixin):
                                                               prefix=self.prefix,
                                                               build_environment=self.build_environment,
                                                               url=self.url,
-                                                              preconfigure=self.preconfigure,
-                                                              check=self.check)
+                                                              preconfigure=preconfigure,
+                                                              check=check)
 
     def _parse_engine(self, engine):
         if engine:
@@ -274,11 +279,26 @@ class ApplicationStage(StageMixin):
             for engine_arg in engine_args:
                 key, value = map(lambda x: x.strip(), engine_arg.split('='))
 
-                # TODO : Check arguments value
-                # self.__check_gromacs_engine_argument(key=key, value=value)
+                # Check engine argument and value
+                self._check_engine_argument(key=key, value=value)
 
                 engine_args_dict[key] = config.SIMD_MAPPER[value] if key == 'simd' else value
             return engine_args_dict
+
+    def _check_engine_argument(self, *, key, value):
+        '''
+        Check whether a value is missing in engines option
+        '''
+        if not key in config.ENGINE_OPTIONS.keys():
+            raise KeyError('{key} not valid engine key. Available keys are {keys}'.format(
+                key=key,
+                keys=config.ENGINE_OPTIONS['simd'])
+            )
+        else:
+            if not value in config.ENGINE_OPTIONS[key]:
+                raise ValueError('{value} is not valid value for key "{key}". Available values are : {values}'.format(
+                    value=value, key=key, values=config.ENGINE_OPTIONS[key])
+                )
 
     def _get_gromacs_cmake_opts(self):
         '''
@@ -291,6 +311,7 @@ class ApplicationStage(StageMixin):
             gromacs_cmake_opts = gromacs_cmake_opts.replace('$c_compiler$', 'mpicc')
             gromacs_cmake_opts = gromacs_cmake_opts.replace('$cxx_compiler$', 'mpicxx')
             gromacs_cmake_opts = gromacs_cmake_opts.replace('$mpi$', 'ON')
+            gromacs_cmake_opts = gromacs_cmake_opts + " -DMPIEXEC_PREFLAGS='--allow-run-as-root;--oversubscribe'"
         else:
             gromacs_cmake_opts = gromacs_cmake_opts.replace('$c_compiler$', 'gcc')
             gromacs_cmake_opts = gromacs_cmake_opts.replace('$cxx_compiler$', 'g++')
@@ -334,9 +355,9 @@ class ApplicationStage(StageMixin):
 class DeploymentStage(StageMixin):
     _os_packages = ['vim']
 
-    def __init__(self, *, args, previous_stage):
+    def __init__(self, *, args, previous_stages):
         self.stage_name = 'deploy_stage'
-        StageMixin.__init__(self, args=args, previous_stage=previous_stage)
+        StageMixin.__init__(self, args=args, previous_stages=previous_stages)
 
     def _prepare(self):
         StageMixin._prepare(self)
@@ -359,7 +380,7 @@ class DeploymentStage(StageMixin):
         self.stage += hpccm.primitives.shell(commands=['mkdir -p {}'.format(scripts_directory)])
 
         # setting arapper sctipt
-        wrapper = os.path.join(scripts_directory, self.previous_stage.wrapper)
+        wrapper = os.path.join(scripts_directory, self.previous_stages[len(self.previous_stages) - 1].wrapper)
         self.stage += hpccm.primitives.copy(src='/scripts/wrapper.py', dest=wrapper)
 
         # copying the gmx_chooser script
