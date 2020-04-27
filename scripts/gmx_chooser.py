@@ -9,9 +9,10 @@ RDTSCP = 'rdtscp'
 
 # Checking whether a file is executable or not
 def is_executable(file):
-    acl = os.popen('ls -l ' + file).read()[0:10]
-    if acl.count('x') == 3:
-        return True
+    if os.path.isfile(file):
+        acl = os.popen('ls -l ' + file).read()[0:10]
+        if acl.count('x') == 3:
+            return True
 
     return False
 
