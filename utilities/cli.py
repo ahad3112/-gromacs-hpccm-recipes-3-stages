@@ -48,7 +48,7 @@ class CLI:
         self.parser.add_argument('--cmake', dest='app_cmake', type=str, default=config.DEFAULT_CMAKE_VERSION,
                                  help='cmake version (default: {0}).'.format(config.DEFAULT_CMAKE_VERSION))
 
-        self.parser.add_argument('--gcc', dest='dev_gcc', type=str, default=config.DEFAULT_GCC_VERSION,
+        self.parser.add_argument('--gcc', dest='dev_app_gcc', type=str, default=config.DEFAULT_GCC_VERSION,
                                  help='gcc version (default: {0}).'.format(config.DEFAULT_GCC_VERSION))
 
         # Optional environment requirement
